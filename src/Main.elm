@@ -138,7 +138,7 @@ view model =
                     (model.editCount - List.length model.edits)
                     (model.editCount - 1)
                 )
-                (List.map .before model.edits)
+                (List.map .before (List.reverse model.edits))
             , [ viewFrame model.editCount model.frame ]
             , List.map2
                 (viewHiddenFrame)
