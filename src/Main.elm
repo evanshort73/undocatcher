@@ -131,47 +131,24 @@ view model =
             , ( "position", "relative" )
             ]
         ]
-        ( ( toString model.editCount
-          , textarea
-              [ onInput TextChanged
-              , value model.frame.text
-              , id "catcher"
-              , property
-                  "selectionStart"
-                  (Json.Encode.int model.frame.start)
-              , property
-                  "selectionEnd"
-                  (Json.Encode.int model.frame.stop)
-              , attribute "onselect" "event.target.focus()"
-              , style
-                  [ ( "width", "100%" )
-                  , ( "height", "100%" )
-                  , ( "position", "absolute" )
-                  , ( "top", "0px" )
-                  , ( "left", "0px" )
-                  , ( "box-sizing", "border-box" )
-                  , ( "margin", "0px" )
-                  ]
-              ]
-              []
-          ) ::
-            List.map2
-              (viewHiddenFrame)
-              ( List.concat
-                  [ List.range
-                      (model.editCount - List.length model.edits)
-                      (model.editCount - 1)
-                  , List.range
-                      (model.editCount + 1)
-                      (model.editCount + List.length model.futureEdits)
-                  ]
-              )
-              ( List.concat
-                  [ List.map .before model.edits
-                  , List.map .after model.futureEdits
-                  ]
-              )
-      )
+        ( List.concat
+            [ List.map2
+                (viewHiddenFrame)
+                ( List.range
+                    (model.editCount - List.length model.edits)
+                    (model.editCount - 1)
+                )
+                (List.map .before model.edits)
+            , [ viewFrame model.editCount model.frame ]
+            , List.map2
+                (viewHiddenFrame)
+                ( List.range
+                    (model.editCount + 1)
+                    (model.editCount + List.length model.futureEdits)
+                )
+                (List.map .after model.futureEdits)
+            ]
+        )
     , button
         [ onClick (Replace ( 1, 2, "ea" ))
         ]
@@ -191,6 +168,33 @@ view model =
         ]
     , Html.text (toString model)
     ]
+
+viewFrame : Int -> Frame -> (String, Html Msg)
+viewFrame i frame =
+  ( toString i
+  , textarea
+      [ onInput TextChanged
+      , value frame.text
+      , id "catcher"
+      , property
+          "selectionStart"
+          (Json.Encode.int frame.start)
+      , property
+          "selectionEnd"
+          (Json.Encode.int frame.stop)
+      , attribute "onselect" "event.target.focus()"
+      , style
+          [ ( "width", "100%" )
+          , ( "height", "100%" )
+          , ( "position", "absolute" )
+          , ( "top", "0px" )
+          , ( "left", "0px" )
+          , ( "box-sizing", "border-box" )
+          , ( "margin", "0px" )
+          ]
+      ]
+      []
+  )
 
 viewHiddenFrame : Int -> Frame -> (String, Html Msg)
 viewHiddenFrame i frame =
