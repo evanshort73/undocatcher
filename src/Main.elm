@@ -16,52 +16,73 @@ main =
     }
 
 type alias Model =
-  { text : String
-  , history : List String
+  { frame : Frame
+  , history : List Frame
   , historyCount : Int
-  , selection : Maybe (Int, Int)
+  }
+
+type alias Frame =
+  { text : String
+  , start : Int
+  , stop : Int
   }
 
 init : ( Model, Cmd Msg )
 init =
-  ( { text = "hello"
+  ( { frame =
+        let text = "hello" in
+          { text = text
+          , start = String.length text
+          , stop = String.length text
+          }
     , history = []
     , historyCount = 0
-    , selection = Nothing
     }
   , Cmd.none
   )
 
 type Msg
   = TextChanged String
-  | SetText String
+  | Replace (Int, Int, String)
   | Undo
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     TextChanged text ->
-      ( { model | text = text }, Cmd.none )
-    SetText text ->
-      ( { model
-        | text = text
-        , history = model.text :: model.history
-        , historyCount = model.historyCount + 1
-        , selection =
-            Just ( String.length text - 2, String.length text )
-        }
+      ( let frame = model.frame in
+          { model | frame = { frame | text = text } }
+      , Cmd.none
+      )
+    Replace ( start, stop, replacement ) ->
+      ( let frame = model.frame in
+          { model
+          | frame =
+              { text =
+                  String.concat
+                    [ String.left start frame.text
+                    , replacement
+                    , String.dropLeft stop frame.text
+                    ]
+              , start = start + String.length replacement
+              , stop = start + String.length replacement
+              }
+          , history =
+              { frame | start = start, stop = stop } ::
+                model.history
+          , historyCount = model.historyCount + 1
+          }
       , Cmd.none
       )
     Undo ->
       ( case model.history of
           [] ->
             model
-          text :: history ->
+          frame :: history ->
             { model
-            | text = text
+            | frame = frame
             , history = history
             , historyCount = model.historyCount - 1
-            , selection = Nothing
             }
       , Cmd.none
       )
@@ -80,40 +101,36 @@ view model =
         ]
         ( ( toString (model.historyCount + 1)
           , textarea
-          ( List.concat
-              [ [ onInput TextChanged
-                , value model.text
-                , id "catcher"
-                , attribute "onselect" "event.target.focus()"
-                , style
-                    [ ( "width", "100%" )
-                    , ( "height", "100%" )
-                    , ( "position", "absolute" )
-                    , ( "top", "0px" )
-                    , ( "left", "0px" )
-                    , ( "box-sizing", "border-box" )
-                    , ( "margin", "0px" )
-                    ]
-                ]
-              , case model.selection of
-                  Nothing ->
-                    []
-                  Just ( start, stop ) ->
-                    [ property "selectionStart" (Json.Encode.int start)
-                    , property "selectionEnd" (Json.Encode.int stop)
-                    ]
+              [ onInput TextChanged
+              , value model.frame.text
+              , id "catcher"
+              , property
+                  "selectionStart"
+                  (Json.Encode.int model.frame.start)
+              , property
+                  "selectionEnd"
+                  (Json.Encode.int model.frame.stop)
+              , attribute "onselect" "event.target.focus()"
+              , style
+                  [ ( "width", "100%" )
+                  , ( "height", "100%" )
+                  , ( "position", "absolute" )
+                  , ( "top", "0px" )
+                  , ( "left", "0px" )
+                  , ( "box-sizing", "border-box" )
+                  , ( "margin", "0px" )
+                  ]
               ]
-          )
-          []
-        ) ::
-          List.indexedMap
-            (viewPrevious model.historyCount)
-            model.history
+              []
+          ) ::
+            List.indexedMap
+              (viewPrevious model.historyCount)
+              model.history
       )
     , button
-        [ onClick (SetText (model.text ++ "lo"))
+        [ onClick (Replace ( 1, 2, "ea" ))
         ]
-        [ Html.text "lo"
+        [ Html.text "e -> ea"
         ]
     , button
         [ onClick Undo
@@ -123,8 +140,8 @@ view model =
     , Html.text (toString model)
     ]
 
-viewPrevious : Int -> Int -> String -> (String, Html Msg)
-viewPrevious historyCount i text =
+viewPrevious : Int -> Int -> Frame -> (String, Html Msg)
+viewPrevious historyCount i frame =
   ( toString (historyCount - i)
   , textarea
       [ style
@@ -138,6 +155,5 @@ viewPrevious historyCount i text =
           , ( "visibility", "hidden" )
           ]
       ]
-      [ Html.text text
-      ]
+      []
   )
