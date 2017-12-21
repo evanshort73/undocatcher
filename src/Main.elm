@@ -1,7 +1,8 @@
 module Main exposing (main)
 
 import Html exposing (Html, div, textarea, button)
-import Html.Attributes exposing (style, id, value, property, attribute)
+import Html.Attributes exposing
+  (style, id, value, disabled, property, attribute)
 import Html.Events exposing (onInput, onClick)
 import Html.Keyed as Keyed
 import Json.Encode
@@ -17,8 +18,14 @@ main =
 
 type alias Model =
   { frame : Frame
-  , history : List Frame
-  , historyCount : Int
+  , edits : List Edit
+  , editCount : Int
+  , futureEdits : List Edit
+  }
+
+type alias Edit =
+  { before : Frame
+  , after : Frame
   }
 
 type alias Frame =
@@ -35,8 +42,9 @@ init =
           , start = String.length text
           , stop = String.length text
           }
-    , history = []
-    , historyCount = 0
+    , edits = []
+    , editCount = 0
+    , futureEdits = []
     }
   , Cmd.none
   )
@@ -45,6 +53,7 @@ type Msg
   = TextChanged String
   | Replace (Int, Int, String)
   | Undo
+  | Redo
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -55,34 +64,57 @@ update msg model =
       , Cmd.none
       )
     Replace ( start, stop, replacement ) ->
-      ( let frame = model.frame in
+      ( let
+          after =
+            { text =
+                String.concat
+                  [ String.left start model.frame.text
+                  , replacement
+                  , String.dropLeft stop model.frame.text
+                  ]
+            , start = start + String.length replacement
+            , stop = start + String.length replacement
+            }
+        in
           { model
-          | frame =
-              { text =
-                  String.concat
-                    [ String.left start frame.text
-                    , replacement
-                    , String.dropLeft stop frame.text
-                    ]
-              , start = start + String.length replacement
-              , stop = start + String.length replacement
-              }
-          , history =
-              { frame | start = start, stop = stop } ::
-                model.history
-          , historyCount = model.historyCount + 1
+          | frame = after
+          , edits =
+              { before =
+                  { text = model.frame.text
+                  , start = start
+                  , stop = stop
+                  }
+              , after = after
+              } ::
+                model.edits
+          , editCount = model.editCount + 1
+          , futureEdits = []
           }
       , Cmd.none
       )
     Undo ->
-      ( case model.history of
+      ( case model.edits of
           [] ->
             model
-          frame :: history ->
+          edit :: edits ->
             { model
-            | frame = frame
-            , history = history
-            , historyCount = model.historyCount - 1
+            | frame = edit.before
+            , edits = edits
+            , editCount = model.editCount - 1
+            , futureEdits = edit :: model.futureEdits
+            }
+      , Cmd.none
+      )
+    Redo ->
+      ( case model.futureEdits of
+          [] ->
+            model
+          edit :: futureEdits ->
+            { model
+            | frame = edit.after
+            , edits = edit :: model.edits
+            , editCount = model.editCount + 1
+            , futureEdits = futureEdits
             }
       , Cmd.none
       )
@@ -99,7 +131,7 @@ view model =
             , ( "position", "relative" )
             ]
         ]
-        ( ( toString (model.historyCount + 1)
+        ( ( toString model.editCount
           , textarea
               [ onInput TextChanged
               , value model.frame.text
@@ -123,9 +155,22 @@ view model =
               ]
               []
           ) ::
-            List.indexedMap
-              (viewPrevious model.historyCount)
-              model.history
+            List.map2
+              (viewHiddenFrame)
+              ( List.concat
+                  [ List.range
+                      (model.editCount - List.length model.edits)
+                      (model.editCount - 1)
+                  , List.range
+                      (model.editCount + 1)
+                      (model.editCount + List.length model.futureEdits)
+                  ]
+              )
+              ( List.concat
+                  [ List.map .before model.edits
+                  , List.map .after model.futureEdits
+                  ]
+              )
       )
     , button
         [ onClick (Replace ( 1, 2, "ea" ))
@@ -134,21 +179,29 @@ view model =
         ]
     , button
         [ onClick Undo
+        , disabled (not (canUndo model))
         ]
         [ Html.text "Undo"
+        ]
+    , button
+        [ onClick Redo
+        , disabled (not (canRedo model))
+        ]
+        [ Html.text "Redo"
         ]
     , Html.text (toString model)
     ]
 
-viewPrevious : Int -> Int -> Frame -> (String, Html Msg)
-viewPrevious historyCount i frame =
-  ( toString (historyCount - i)
+viewHiddenFrame : Int -> Frame -> (String, Html Msg)
+viewHiddenFrame i frame =
+  ( toString i
   , textarea
-      [ style
+      [ value frame.text
+      , style
           [ ( "width", "100%" )
-          , ( "height", "100%" )
+          , ( "height", "25%" )
           , ( "position", "absolute" )
-          , ( "top", "0px" )
+          , ( "bottom", "0px" )
           , ( "left", "0px" )
           , ( "box-sizing", "border-box" )
           , ( "margin", "0px" )
@@ -157,3 +210,15 @@ viewPrevious historyCount i frame =
       ]
       []
   )
+
+canUndo : Model -> Bool
+canUndo model =
+  case model.edits of
+    [] -> False
+    edit :: _ -> model.frame.text == edit.after.text
+
+canRedo : Model -> Bool
+canRedo model =
+  case model.futureEdits of
+    [] -> False
+    edit :: _ -> model.frame.text == edit.before.text
