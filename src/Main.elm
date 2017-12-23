@@ -244,6 +244,10 @@ viewHiddenFrame i frame =
   ( toString i
   , textarea
       [ value frame.text
+      , attribute
+          "oninput"
+          "if (event.inputType == \"historyUndo\") { document.execCommand(\"redo\", true, null); } else if (event.inputType == \"historyRedo\") { document.execCommand(\"undo\", true, null); }"
+      , disabled True
       , style
           [ ( "width", "100%" )
           , ( "height", "25%" )
