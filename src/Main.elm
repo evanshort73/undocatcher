@@ -3,9 +3,10 @@ module Main exposing (main)
 import Html exposing (Html, div, textarea, button)
 import Html.Attributes exposing
   (style, id, value, disabled, property, attribute)
-import Html.Events exposing (onInput, onClick)
+import Html.Events exposing (onInput, onClick, on)
 import Html.Keyed as Keyed
 import Json.Encode
+import Json.Decode exposing (Decoder)
 
 main : Program Never Model Msg
 main =
@@ -21,6 +22,8 @@ type alias Model =
   , edits : List Edit
   , editCount : Int
   , futureEdits : List Edit
+  , onZUp : Msg
+  , onYUp : Msg
   }
 
 type alias Edit =
@@ -45,22 +48,36 @@ init =
     , edits = []
     , editCount = 0
     , futureEdits = []
+    , onZUp = NoOp
+    , onYUp = NoOp
     }
   , Cmd.none
   )
 
 type Msg
-  = TextChanged String
+  = NoOp
+  | TextChanged String
   | Replace (Int, Int, String)
   | Undo
   | Redo
+  | KeyDown (String, Int)
+  | KeyUp (String, Int)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
+    NoOp ->
+      ( model, Cmd.none )
     TextChanged text ->
-      ( let frame = model.frame in
-          { model | frame = { frame | text = text } }
+      ( if text == model.frame.text then
+          model
+        else
+          let frame = model.frame in
+            { model
+            | frame = { frame | text = text }
+            , onZUp = NoOp
+            , onYUp = NoOp
+            }
       , Cmd.none
       )
     Replace ( start, stop, replacement ) ->
@@ -95,29 +112,53 @@ update msg model =
     Undo ->
       ( case model.edits of
           [] ->
-            model
+            { model
+            | onZUp = NoOp
+            , onYUp = NoOp
+            }
           edit :: edits ->
             { model
             | frame = edit.before
             , edits = edits
             , editCount = model.editCount - 1
             , futureEdits = edit :: model.futureEdits
+            , onZUp = NoOp
+            , onYUp = NoOp
             }
       , Cmd.none
       )
     Redo ->
       ( case model.futureEdits of
           [] ->
-            model
+            { model
+            | onZUp = NoOp
+            , onYUp = NoOp
+            }
           edit :: futureEdits ->
             { model
             | frame = edit.after
             , edits = edit :: model.edits
             , editCount = model.editCount + 1
             , futureEdits = futureEdits
+            , onZUp = NoOp
+            , onYUp = NoOp
             }
       , Cmd.none
       )
+    KeyDown ("c", 90) ->
+      ( { model | onZUp = Undo }, Cmd.none )
+    KeyDown ("cs", 90) ->
+      ( { model | onZUp = Redo }, Cmd.none )
+    KeyDown ("c", 89) ->
+      ( { model | onYUp = Redo }, Cmd.none )
+    KeyDown x ->
+      ( model, Cmd.none )
+    KeyUp (_, 90) ->
+      update model.onZUp model
+    KeyUp (_, 89) ->
+      update model.onYUp model
+    KeyUp _ ->
+      ( model, Cmd.none )
 
 view : Model -> Html Msg
 view model =
@@ -174,6 +215,8 @@ viewFrame i frame =
   ( toString i
   , textarea
       [ onInput TextChanged
+      , on "keydown" (Json.Decode.map KeyDown decodeKeyEvent)
+      , on "keyup" (Json.Decode.map KeyUp decodeKeyEvent)
       , value frame.text
       , id "catcher"
       , property
@@ -226,3 +269,28 @@ canRedo model =
   case model.futureEdits of
     [] -> False
     edit :: _ -> model.frame.text == edit.before.text
+
+decodeKeyEvent : Json.Decode.Decoder (String, Int)
+decodeKeyEvent =
+  Json.Decode.map2
+    (,)
+    ( Json.Decode.map4
+        concat4Strings
+        (ifFieldThenString "ctrlKey" "c")
+        (ifFieldThenString "metaKey" "c")
+        (ifFieldThenString "altKey" "a")
+        (ifFieldThenString "shiftKey" "s")
+    )
+    (Json.Decode.field "which" Json.Decode.int)
+
+concat4Strings : String -> String -> String -> String -> String
+concat4Strings x y z w =
+  x ++ y ++ z ++ w
+
+ifFieldThenString : String -> String -> Json.Decode.Decoder String
+ifFieldThenString field s =
+  Json.Decode.map (stringIfTrue s) (Json.Decode.field field Json.Decode.bool)
+
+stringIfTrue : String -> Bool -> String
+stringIfTrue s true =
+  if true then s else ""
