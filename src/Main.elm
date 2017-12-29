@@ -60,9 +60,9 @@ type Msg
   = NoOp
   | TextChanged (Int, String)
   | Replace (Int, Int, String)
-  | Undo Int
-  | Redo Int
-  | KeyDown (String, Int)
+  | Undo (Int, Int)
+  | Redo (Int, Int)
+  | KeyDown (Int, String, Int)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -109,63 +109,63 @@ update msg model =
           }
       , Task.attempt (always NoOp) (Dom.focus "catcher")
       )
-    Undo inputCount ->
+    Undo ( editCount, inputCount ) ->
       case model.edits of
         [] ->
           ( model, Cmd.none )
         edit :: edits ->
           if
-            inputCount == model.inputCount &&
-              model.frame.text == edit.after.text
+            editCount == model.editCount &&
+              inputCount == model.inputCount &&
+                model.frame.text == edit.after.text
           then
             ( { model
               | frame = edit.before
               , edits = edits
               , editCount = model.editCount - 1
               , futureEdits = edit :: model.futureEdits
-              , inputCount = model.inputCount + 1
               }
             , Task.attempt (always NoOp) (Dom.focus "catcher")
             )
           else
             ( model, Cmd.none )
-    Redo inputCount ->
+    Redo ( editCount, inputCount ) ->
       case model.futureEdits of
         [] ->
           ( model, Cmd.none )
         edit :: futureEdits ->
           if
-            inputCount == model.inputCount &&
-              model.frame.text == edit.before.text
+            editCount == model.editCount &&
+              inputCount == model.inputCount &&
+                model.frame.text == edit.before.text
           then
             ( { model
               | frame = edit.after
               , edits = edit :: model.edits
               , editCount = model.editCount + 1
               , futureEdits = futureEdits
-              , inputCount = model.inputCount + 1
               }
             , Task.attempt (always NoOp) (Dom.focus "catcher")
             )
           else
             ( model, Cmd.none )
-    KeyDown ("c", 90) ->
+    KeyDown (editCount, "c", 90) ->
       ( model
       , Task.perform
-          (always (Undo model.inputCount))
-          (Process.sleep (5 * Time.millisecond))
+          (always (Undo (editCount, model.inputCount)))
+          (Process.sleep (50 * Time.millisecond))
       )
-    KeyDown ("cs", 90) ->
+    KeyDown (editCount, "cs", 90) ->
       ( model
       , Task.perform
-          (always (Redo model.inputCount))
-          (Process.sleep (5 * Time.millisecond))
+          (always (Redo (editCount, model.inputCount)))
+          (Process.sleep (50 * Time.millisecond))
       )
-    KeyDown ("c", 89) ->
+    KeyDown (editCount, "c", 89) ->
       ( model
       , Task.perform
-          (always (Redo model.inputCount))
-          (Process.sleep (5 * Time.millisecond))
+          (always (Redo (editCount, model.inputCount)))
+          (Process.sleep (50 * Time.millisecond))
       )
     KeyDown x ->
       ( model, Cmd.none )
@@ -206,13 +206,13 @@ view model =
         [ Html.text "e -> ea"
         ]
     , button
-        [ onClick (Undo model.inputCount)
+        [ onClick (Undo (model.editCount, model.inputCount))
         , disabled (not (canUndo model))
         ]
         [ Html.text "Undo"
         ]
     , button
-        [ onClick (Redo model.inputCount)
+        [ onClick (Redo (model.editCount, model.inputCount))
         , disabled (not (canRedo model))
         ]
         [ Html.text "Redo"
@@ -225,7 +225,7 @@ viewFrame i frame =
   ( toString i
   , textarea
       [ onInput (TextChanged << (,) i)
-      , on "keydown" (Json.Decode.map KeyDown decodeKeyEvent)
+      , on "keydown" (Json.Decode.map KeyDown (decodeKeyEvent i))
       , value frame.text
       , id "catcher"
       , property
@@ -287,10 +287,10 @@ canRedo model =
     [] -> False
     edit :: _ -> model.frame.text == edit.before.text
 
-decodeKeyEvent : Json.Decode.Decoder (String, Int)
-decodeKeyEvent =
+decodeKeyEvent : Int -> Json.Decode.Decoder (Int, String, Int)
+decodeKeyEvent editCount =
   Json.Decode.map2
-    (,)
+    ((,,) editCount)
     ( Json.Decode.map4
         concat4Strings
         (ifFieldThenString "ctrlKey" "c")
