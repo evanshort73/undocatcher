@@ -1,12 +1,16 @@
 module Main exposing (main)
 
-import Html exposing (Html, div, textarea, button)
+import Dom
+import Html exposing (Html, Attribute, div, textarea, button)
 import Html.Attributes exposing
   (style, id, value, disabled, property, attribute)
 import Html.Events exposing (onInput, onClick, on)
 import Html.Keyed as Keyed
 import Json.Encode
 import Json.Decode exposing (Decoder)
+import Process
+import Task
+import Time
 
 main : Program Never Model Msg
 main =
@@ -22,8 +26,7 @@ type alias Model =
   , edits : List Edit
   , editCount : Int
   , futureEdits : List Edit
-  , onZUp : Msg
-  , onYUp : Msg
+  , inputCount : Int
   }
 
 type alias Edit =
@@ -48,8 +51,7 @@ init =
     , edits = []
     , editCount = 0
     , futureEdits = []
-    , onZUp = NoOp
-    , onYUp = NoOp
+    , inputCount = 0
     }
   , Cmd.none
   )
@@ -58,10 +60,9 @@ type Msg
   = NoOp
   | TextChanged String
   | Replace (Int, Int, String)
-  | Undo
-  | Redo
+  | Undo Int
+  | Redo Int
   | KeyDown (String, Int)
-  | KeyUp (String, Int)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -75,8 +76,7 @@ update msg model =
           let frame = model.frame in
             { model
             | frame = { frame | text = text }
-            , onZUp = NoOp
-            , onYUp = NoOp
+            , inputCount = model.inputCount + 1
             }
       , Cmd.none
       )
@@ -107,57 +107,67 @@ update msg model =
           , editCount = model.editCount + 1
           , futureEdits = []
           }
-      , Cmd.none
+      , Task.attempt (always NoOp) (Dom.focus "catcher")
       )
-    Undo ->
-      ( case model.edits of
-          [] ->
-            { model
-            | onZUp = NoOp
-            , onYUp = NoOp
-            }
-          edit :: edits ->
-            { model
-            | frame = edit.before
-            , edits = edits
-            , editCount = model.editCount - 1
-            , futureEdits = edit :: model.futureEdits
-            , onZUp = NoOp
-            , onYUp = NoOp
-            }
-      , Cmd.none
-      )
-    Redo ->
-      ( case model.futureEdits of
-          [] ->
-            { model
-            | onZUp = NoOp
-            , onYUp = NoOp
-            }
-          edit :: futureEdits ->
-            { model
-            | frame = edit.after
-            , edits = edit :: model.edits
-            , editCount = model.editCount + 1
-            , futureEdits = futureEdits
-            , onZUp = NoOp
-            , onYUp = NoOp
-            }
-      , Cmd.none
-      )
+    Undo inputCount ->
+      case model.edits of
+        [] ->
+          ( model, Cmd.none )
+        edit :: edits ->
+          if
+            inputCount == model.inputCount &&
+              model.frame.text == edit.after.text
+          then
+            ( { model
+              | frame = edit.before
+              , edits = edits
+              , editCount = model.editCount - 1
+              , futureEdits = edit :: model.futureEdits
+              , inputCount = model.inputCount + 1
+              }
+            , Task.attempt (always NoOp) (Dom.focus "catcher")
+            )
+          else
+            ( model, Cmd.none )
+    Redo inputCount ->
+      case model.futureEdits of
+        [] ->
+          ( model, Cmd.none )
+        edit :: futureEdits ->
+          if
+            inputCount == model.inputCount &&
+              model.frame.text == edit.before.text
+          then
+            ( { model
+              | frame = edit.after
+              , edits = edit :: model.edits
+              , editCount = model.editCount + 1
+              , futureEdits = futureEdits
+              , inputCount = model.inputCount + 1
+              }
+            , Task.attempt (always NoOp) (Dom.focus "catcher")
+            )
+          else
+            ( model, Cmd.none )
     KeyDown ("c", 90) ->
-      ( { model | onZUp = Undo }, Cmd.none )
+      ( model
+      , Task.perform
+          (always (Undo model.inputCount))
+          (Process.sleep (5 * Time.millisecond))
+      )
     KeyDown ("cs", 90) ->
-      ( { model | onZUp = Redo }, Cmd.none )
+      ( model
+      , Task.perform
+          (always (Redo model.inputCount))
+          (Process.sleep (5 * Time.millisecond))
+      )
     KeyDown ("c", 89) ->
-      ( { model | onYUp = Redo }, Cmd.none )
+      ( model
+      , Task.perform
+          (always (Redo model.inputCount))
+          (Process.sleep (5 * Time.millisecond))
+      )
     KeyDown x ->
-      ( model, Cmd.none )
-    KeyUp (_, 90) ->
-      update model.onZUp model
-    KeyUp (_, 89) ->
-      update model.onYUp model
-    KeyUp _ ->
       ( model, Cmd.none )
 
 view : Model -> Html Msg
@@ -174,7 +184,7 @@ view model =
         ]
         ( List.concat
             [ List.map2
-                (viewHiddenFrame)
+                (viewHiddenFrame cancelUndo)
                 ( List.range
                     (model.editCount - List.length model.edits)
                     (model.editCount - 1)
@@ -182,7 +192,7 @@ view model =
                 (List.map .before (List.reverse model.edits))
             , [ viewFrame model.editCount model.frame ]
             , List.map2
-                (viewHiddenFrame)
+                (viewHiddenFrame cancelRedo)
                 ( List.range
                     (model.editCount + 1)
                     (model.editCount + List.length model.futureEdits)
@@ -196,13 +206,13 @@ view model =
         [ Html.text "e -> ea"
         ]
     , button
-        [ onClick Undo
+        [ onClick (Undo model.inputCount)
         , disabled (not (canUndo model))
         ]
         [ Html.text "Undo"
         ]
     , button
-        [ onClick Redo
+        [ onClick (Redo model.inputCount)
         , disabled (not (canRedo model))
         ]
         [ Html.text "Redo"
@@ -216,7 +226,6 @@ viewFrame i frame =
   , textarea
       [ onInput TextChanged
       , on "keydown" (Json.Decode.map KeyDown decodeKeyEvent)
-      , on "keyup" (Json.Decode.map KeyUp decodeKeyEvent)
       , value frame.text
       , id "catcher"
       , property
@@ -225,7 +234,6 @@ viewFrame i frame =
       , property
           "selectionEnd"
           (Json.Encode.int frame.stop)
-      , attribute "onselect" "event.target.focus()"
       , style
           [ ( "width", "100%" )
           , ( "height", "100%" )
@@ -239,15 +247,12 @@ viewFrame i frame =
       []
   )
 
-viewHiddenFrame : Int -> Frame -> (String, Html Msg)
-viewHiddenFrame i frame =
+viewHiddenFrame : String -> Int -> Frame -> (String, Html Msg)
+viewHiddenFrame inputScript i frame =
   ( toString i
   , textarea
       [ value frame.text
-      , attribute
-          "oninput"
-          "if (event.inputType == \"historyUndo\") { document.execCommand(\"redo\", true, null); } else if (event.inputType == \"historyRedo\") { document.execCommand(\"undo\", true, null); }"
-      , disabled True
+      , attribute "oninput" inputScript
       , style
           [ ( "width", "100%" )
           , ( "height", "25%" )
@@ -261,6 +266,14 @@ viewHiddenFrame i frame =
       ]
       []
   )
+
+cancelUndo : String
+cancelUndo =
+  "if (event.inputType == \"historyUndo\") document.execCommand(\"redo\", true, null)"
+
+cancelRedo : String
+cancelRedo =
+  "if (event.inputType == \"historyRedo\") document.execCommand(\"undo\", true, null)"
 
 canUndo : Model -> Bool
 canUndo model =
