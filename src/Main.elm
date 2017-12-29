@@ -152,19 +152,19 @@ update msg model =
     KeyDown (editCount, "c", 90) ->
       ( model
       , Task.perform
-          (always (Undo (editCount, model.inputCount)))
+          (always (Undo ( editCount, model.inputCount )))
           (Process.sleep (50 * Time.millisecond))
       )
     KeyDown (editCount, "cs", 90) ->
       ( model
       , Task.perform
-          (always (Redo (editCount, model.inputCount)))
+          (always (Redo ( editCount, model.inputCount )))
           (Process.sleep (50 * Time.millisecond))
       )
     KeyDown (editCount, "c", 89) ->
       ( model
       , Task.perform
-          (always (Redo (editCount, model.inputCount)))
+          (always (Redo ( editCount, model.inputCount )))
           (Process.sleep (50 * Time.millisecond))
       )
     KeyDown x ->
@@ -206,13 +206,13 @@ view model =
         [ Html.text "e -> ea"
         ]
     , button
-        [ onClick (Undo (model.editCount, model.inputCount))
+        [ onClick (Undo ( model.editCount, model.inputCount ))
         , disabled (not (canUndo model))
         ]
         [ Html.text "Undo"
         ]
     , button
-        [ onClick (Redo (model.editCount, model.inputCount))
+        [ onClick (Redo ( model.editCount, model.inputCount ))
         , disabled (not (canRedo model))
         ]
         [ Html.text "Redo"
