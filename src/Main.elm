@@ -58,7 +58,7 @@ init =
 
 type Msg
   = NoOp
-  | TextChanged String
+  | TextChanged (Int, String)
   | Replace (Int, Int, String)
   | Undo Int
   | Redo Int
@@ -69,8 +69,8 @@ update msg model =
   case msg of
     NoOp ->
       ( model, Cmd.none )
-    TextChanged text ->
-      ( if text == model.frame.text then
+    TextChanged (editCount, text) ->
+      ( if editCount /= model.editCount || text == model.frame.text then
           model
         else
           let frame = model.frame in
@@ -224,7 +224,7 @@ viewFrame : Int -> Frame -> (String, Html Msg)
 viewFrame i frame =
   ( toString i
   , textarea
-      [ onInput TextChanged
+      [ onInput (TextChanged << (,) i)
       , on "keydown" (Json.Decode.map KeyDown decodeKeyEvent)
       , value frame.text
       , id "catcher"
@@ -269,11 +269,11 @@ viewHiddenFrame inputScript i frame =
 
 cancelUndo : String
 cancelUndo =
-  "if (event.inputType == \"historyUndo\") document.execCommand(\"redo\", true, null)"
+  "document.execCommand(\"redo\", true, null)"
 
 cancelRedo : String
 cancelRedo =
-  "if (event.inputType == \"historyRedo\") document.execCommand(\"undo\", true, null)"
+  "document.execCommand(\"undo\", true, null)"
 
 canUndo : Model -> Bool
 canUndo model =
