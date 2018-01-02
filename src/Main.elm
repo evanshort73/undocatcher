@@ -62,7 +62,8 @@ type Msg
   | Replace (Int, Int, String)
   | Undo (Int, Int)
   | Redo (Int, Int)
-  | KeyDown (Int, String, Int)
+  | RequestUndo Int
+  | RequestRedo Int
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -149,26 +150,18 @@ update msg model =
             )
           else
             ( model, Cmd.none )
-    KeyDown (editCount, "c", 90) ->
+    RequestUndo editCount ->
       ( model
       , Task.perform
           (always (Undo ( editCount, model.inputCount )))
-          (Process.sleep (50 * Time.millisecond))
+          (Process.sleep (5 * Time.millisecond))
       )
-    KeyDown (editCount, "cs", 90) ->
+    RequestRedo editCount ->
       ( model
       , Task.perform
           (always (Redo ( editCount, model.inputCount )))
-          (Process.sleep (50 * Time.millisecond))
+          (Process.sleep (5 * Time.millisecond))
       )
-    KeyDown (editCount, "c", 89) ->
-      ( model
-      , Task.perform
-          (always (Redo ( editCount, model.inputCount )))
-          (Process.sleep (50 * Time.millisecond))
-      )
-    KeyDown x ->
-      ( model, Cmd.none )
 
 view : Model -> Html Msg
 view model =
@@ -225,7 +218,9 @@ viewFrame i frame =
   ( toString i
   , textarea
       [ onInput (TextChanged << (,) i)
-      , on "keydown" (Json.Decode.map KeyDown (decodeKeyEvent i))
+      , on
+          "keydown"
+          (Json.Decode.andThen (interpretKeyEvent i) decodeKeyEvent)
       , value frame.text
       , id "catcher"
       , property
@@ -287,10 +282,18 @@ canRedo model =
     [] -> False
     edit :: _ -> model.frame.text == edit.before.text
 
-decodeKeyEvent : Int -> Json.Decode.Decoder (Int, String, Int)
-decodeKeyEvent editCount =
+interpretKeyEvent : Int -> (String, Int) -> Json.Decode.Decoder Msg
+interpretKeyEvent editCount event =
+  case event of
+    ( "c", 90 ) -> Json.Decode.succeed (RequestUndo editCount)
+    ( "cs", 90 ) -> Json.Decode.succeed (RequestRedo editCount)
+    ( "c", 89 ) -> Json.Decode.succeed (RequestRedo editCount)
+    _ -> Json.Decode.fail ("ignoring key event: " ++ toString event)
+
+decodeKeyEvent : Json.Decode.Decoder (String, Int)
+decodeKeyEvent =
   Json.Decode.map2
-    ((,,) editCount)
+    (,)
     ( Json.Decode.map4
         concat4Strings
         (ifFieldThenString "ctrlKey" "c")
