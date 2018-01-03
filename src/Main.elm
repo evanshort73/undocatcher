@@ -60,10 +60,10 @@ type Msg
   = NoOp
   | TextChanged (Int, String)
   | Replace (Int, Int, String)
-  | Undo (Int, Int)
-  | Redo (Int, Int)
-  | RequestUndo Int
-  | RequestRedo Int
+  | Undo Int
+  | Redo Int
+  | RequestUndo
+  | RequestRedo
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
@@ -71,7 +71,9 @@ update msg model =
     NoOp ->
       ( model, Cmd.none )
     TextChanged (editCount, text) ->
-      ( if editCount /= model.editCount || text == model.frame.text then
+      ( if editCount /= model.editCount then
+          { model | inputCount = model.inputCount + 1 }
+        else if text == model.frame.text then
           model
         else
           let frame = model.frame in
@@ -110,56 +112,54 @@ update msg model =
           }
       , Task.attempt (always NoOp) (Dom.focus "catcher")
       )
-    Undo ( editCount, inputCount ) ->
-      case model.edits of
-        [] ->
-          ( model, Cmd.none )
-        edit :: edits ->
-          if
-            editCount == model.editCount &&
-              inputCount == model.inputCount &&
-                model.frame.text == edit.after.text
-          then
-            ( { model
-              | frame = edit.before
-              , edits = edits
-              , editCount = model.editCount - 1
-              , futureEdits = edit :: model.futureEdits
-              }
-            , Task.attempt (always NoOp) (Dom.focus "catcher")
-            )
-          else
+    Undo inputCount ->
+      if inputCount /= model.inputCount then
+        ( model, Cmd.none )
+      else
+        case model.edits of
+          [] ->
             ( model, Cmd.none )
-    Redo ( editCount, inputCount ) ->
-      case model.futureEdits of
-        [] ->
-          ( model, Cmd.none )
-        edit :: futureEdits ->
-          if
-            editCount == model.editCount &&
-              inputCount == model.inputCount &&
-                model.frame.text == edit.before.text
-          then
-            ( { model
-              | frame = edit.after
-              , edits = edit :: model.edits
-              , editCount = model.editCount + 1
-              , futureEdits = futureEdits
-              }
-            , Task.attempt (always NoOp) (Dom.focus "catcher")
-            )
-          else
+          edit :: edits ->
+            if model.frame.text == edit.after.text then
+              ( { model
+                | frame = edit.before
+                , edits = edits
+                , editCount = model.editCount - 1
+                , futureEdits = edit :: model.futureEdits
+                }
+              , Task.attempt (always NoOp) (Dom.focus "catcher")
+              )
+            else
+              ( model, Cmd.none )
+    Redo inputCount ->
+      if inputCount /= model.inputCount then
+        ( model, Cmd.none )
+      else
+        case model.futureEdits of
+          [] ->
             ( model, Cmd.none )
-    RequestUndo editCount ->
+          edit :: futureEdits ->
+            if model.frame.text == edit.before.text then
+              ( { model
+                | frame = edit.after
+                , edits = edit :: model.edits
+                , editCount = model.editCount + 1
+                , futureEdits = futureEdits
+                }
+              , Task.attempt (always NoOp) (Dom.focus "catcher")
+              )
+            else
+              ( model, Cmd.none )
+    RequestUndo ->
       ( model
       , Task.perform
-          (always (Undo ( editCount, model.inputCount )))
+          (always (Undo model.inputCount))
           (Process.sleep (5 * Time.millisecond))
       )
-    RequestRedo editCount ->
+    RequestRedo ->
       ( model
       , Task.perform
-          (always (Redo ( editCount, model.inputCount )))
+          (always (Redo model.inputCount))
           (Process.sleep (5 * Time.millisecond))
       )
 
@@ -199,13 +199,13 @@ view model =
         [ Html.text "e -> ea"
         ]
     , button
-        [ onClick (Undo ( model.editCount, model.inputCount ))
+        [ onClick (Undo model.inputCount)
         , disabled (not (canUndo model))
         ]
         [ Html.text "Undo"
         ]
     , button
-        [ onClick (Redo ( model.editCount, model.inputCount ))
+        [ onClick (Redo model.inputCount)
         , disabled (not (canRedo model))
         ]
         [ Html.text "Redo"
@@ -220,7 +220,7 @@ viewFrame i frame =
       [ onInput (TextChanged << (,) i)
       , on
           "keydown"
-          (Json.Decode.andThen (interpretKeyEvent i) decodeKeyEvent)
+          (Json.Decode.andThen interpretKeyEvent decodeKeyEvent)
       , value frame.text
       , id "catcher"
       , property
@@ -282,12 +282,12 @@ canRedo model =
     [] -> False
     edit :: _ -> model.frame.text == edit.before.text
 
-interpretKeyEvent : Int -> (String, Int) -> Json.Decode.Decoder Msg
-interpretKeyEvent editCount event =
+interpretKeyEvent : (String, Int) -> Json.Decode.Decoder Msg
+interpretKeyEvent event =
   case event of
-    ( "c", 90 ) -> Json.Decode.succeed (RequestUndo editCount)
-    ( "cs", 90 ) -> Json.Decode.succeed (RequestRedo editCount)
-    ( "c", 89 ) -> Json.Decode.succeed (RequestRedo editCount)
+    ( "c", 90 ) -> Json.Decode.succeed RequestUndo
+    ( "cs", 90 ) -> Json.Decode.succeed RequestRedo
+    ( "c", 89 ) -> Json.Decode.succeed RequestRedo
     _ -> Json.Decode.fail ("ignoring key event: " ++ toString event)
 
 decodeKeyEvent : Json.Decode.Decoder (String, Int)
