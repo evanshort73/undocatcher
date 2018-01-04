@@ -1,23 +1,21 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Dom
 import Html exposing (Html, Attribute, div, textarea, button)
 import Html.Attributes exposing
   (style, id, value, disabled, property, attribute)
-import Html.Events exposing (onInput, onClick, on)
+import Html.Events exposing (onInput, onClick)
 import Html.Keyed as Keyed
 import Json.Encode
-import Json.Decode exposing (Decoder)
-import Process
 import Task
-import Time
 
 main : Program Never Model Msg
 main =
   Html.program
     { init = init
     , update = update
-    , subscriptions = always Sub.none
+    , subscriptions =
+        always (Sub.batch [ undo (always Undo), redo (always Redo) ])
     , view = view
     }
 
@@ -26,7 +24,6 @@ type alias Model =
   , edits : List Edit
   , editCount : Int
   , futureEdits : List Edit
-  , inputCount : Int
   }
 
 type alias Edit =
@@ -51,36 +48,25 @@ init =
     , edits = []
     , editCount = 0
     , futureEdits = []
-    , inputCount = 0
     }
   , Cmd.none
   )
 
 type Msg
   = NoOp
-  | TextChanged (Int, String)
+  | TextChanged String
   | Replace (Int, Int, String)
-  | Undo Int
-  | Redo Int
-  | RequestUndo
-  | RequestRedo
+  | Undo
+  | Redo
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     NoOp ->
       ( model, Cmd.none )
-    TextChanged (editCount, text) ->
-      ( if editCount /= model.editCount then
-          { model | inputCount = model.inputCount + 1 }
-        else if text == model.frame.text then
-          model
-        else
-          let frame = model.frame in
-            { model
-            | frame = { frame | text = text }
-            , inputCount = model.inputCount + 1
-            }
+    TextChanged text ->
+      ( let frame = model.frame in
+          { model | frame = { frame | text = text }}
       , Cmd.none
       )
     Replace ( start, stop, replacement ) ->
@@ -112,56 +98,36 @@ update msg model =
           }
       , Task.attempt (always NoOp) (Dom.focus "catcher")
       )
-    Undo inputCount ->
-      if inputCount /= model.inputCount then
-        ( model, Cmd.none )
-      else
-        case model.edits of
-          [] ->
-            ( model, Cmd.none )
-          edit :: edits ->
-            if model.frame.text == edit.after.text then
-              ( { model
-                | frame = edit.before
-                , edits = edits
-                , editCount = model.editCount - 1
-                , futureEdits = edit :: model.futureEdits
-                }
-              , Task.attempt (always NoOp) (Dom.focus "catcher")
-              )
-            else
-              ( model, Cmd.none )
-    Redo inputCount ->
-      if inputCount /= model.inputCount then
-        ( model, Cmd.none )
-      else
-        case model.futureEdits of
-          [] ->
-            ( model, Cmd.none )
-          edit :: futureEdits ->
-            if model.frame.text == edit.before.text then
-              ( { model
-                | frame = edit.after
-                , edits = edit :: model.edits
-                , editCount = model.editCount + 1
-                , futureEdits = futureEdits
-                }
-              , Task.attempt (always NoOp) (Dom.focus "catcher")
-              )
-            else
-              ( model, Cmd.none )
-    RequestUndo ->
-      ( model
-      , Task.perform
-          (always (Undo model.inputCount))
-          (Process.sleep (5 * Time.millisecond))
-      )
-    RequestRedo ->
-      ( model
-      , Task.perform
-          (always (Redo model.inputCount))
-          (Process.sleep (5 * Time.millisecond))
-      )
+    Undo ->
+      case model.edits of
+        [] ->
+          ( model, Cmd.none )
+        edit :: edits ->
+          ( { model
+            | frame = edit.before
+            , edits = edits
+            , editCount = model.editCount - 1
+            , futureEdits = edit :: model.futureEdits
+            }
+          , Task.attempt (always NoOp) (Dom.focus "catcher")
+          )
+    Redo ->
+      case model.futureEdits of
+        [] ->
+          ( model, Cmd.none )
+        edit :: futureEdits ->
+          ( { model
+            | frame = edit.after
+            , edits = edit :: model.edits
+            , editCount = model.editCount + 1
+            , futureEdits = futureEdits
+            }
+          , Task.attempt (always NoOp) (Dom.focus "catcher")
+          )
+
+port undo : (() -> msg) -> Sub msg
+
+port redo : (() -> msg) -> Sub msg
 
 view : Model -> Html Msg
 view model =
@@ -183,7 +149,7 @@ view model =
                     (model.editCount - 1)
                 )
                 (List.map .before (List.reverse model.edits))
-            , [ viewFrame model.editCount model.frame ]
+            , [ viewFrame model ]
             , List.map2
                 (viewHiddenFrame cancelRedo)
                 ( List.range
@@ -199,13 +165,13 @@ view model =
         [ Html.text "e -> ea"
         ]
     , button
-        [ onClick (Undo model.inputCount)
+        [ onClick Undo
         , disabled (not (canUndo model))
         ]
         [ Html.text "Undo"
         ]
     , button
-        [ onClick (Redo model.inputCount)
+        [ onClick Redo
         , disabled (not (canRedo model))
         ]
         [ Html.text "Redo"
@@ -213,22 +179,34 @@ view model =
     , Html.text (toString model)
     ]
 
-viewFrame : Int -> Frame -> (String, Html Msg)
-viewFrame i frame =
-  ( toString i
+viewFrame : Model -> (String, Html Msg)
+viewFrame model =
+  ( toString model.editCount
   , textarea
-      [ onInput (TextChanged << (,) i)
-      , on
-          "keydown"
-          (Json.Decode.andThen interpretKeyEvent decodeKeyEvent)
-      , value frame.text
+      [ onInput TextChanged
+      , attribute "onkeydown" "lockCatcher(event)"
+      , attribute "oninput" "unlockCatcher(event)"
       , id "catcher"
+      , value model.frame.text
       , property
           "selectionStart"
-          (Json.Encode.int frame.start)
+          (Json.Encode.int model.frame.start)
       , property
           "selectionEnd"
-          (Json.Encode.int frame.stop)
+          (Json.Encode.int model.frame.stop)
+      , property "lockedValue" Json.Encode.null
+      , property
+          "undoValue"
+          ( case model.edits of
+              [] -> Json.Encode.null
+              edit :: _ -> (Json.Encode.string edit.after.text)
+          )
+      , property
+          "redoValue"
+          ( case model.futureEdits of
+              [] -> Json.Encode.null
+              edit :: _ -> (Json.Encode.string edit.before.text)
+          )
       , style
           [ ( "width", "100%" )
           , ( "height", "100%" )
@@ -248,6 +226,7 @@ viewHiddenFrame inputScript i frame =
   , textarea
       [ value frame.text
       , attribute "oninput" inputScript
+      , property "lockedValue" (Json.Encode.string frame.text)
       , style
           [ ( "width", "100%" )
           , ( "height", "25%" )
@@ -281,36 +260,3 @@ canRedo model =
   case model.futureEdits of
     [] -> False
     edit :: _ -> model.frame.text == edit.before.text
-
-interpretKeyEvent : (String, Int) -> Json.Decode.Decoder Msg
-interpretKeyEvent event =
-  case event of
-    ( "c", 90 ) -> Json.Decode.succeed RequestUndo
-    ( "cs", 90 ) -> Json.Decode.succeed RequestRedo
-    ( "c", 89 ) -> Json.Decode.succeed RequestRedo
-    _ -> Json.Decode.fail ("ignoring key event: " ++ toString event)
-
-decodeKeyEvent : Json.Decode.Decoder (String, Int)
-decodeKeyEvent =
-  Json.Decode.map2
-    (,)
-    ( Json.Decode.map4
-        concat4Strings
-        (ifFieldThenString "ctrlKey" "c")
-        (ifFieldThenString "metaKey" "c")
-        (ifFieldThenString "altKey" "a")
-        (ifFieldThenString "shiftKey" "s")
-    )
-    (Json.Decode.field "which" Json.Decode.int)
-
-concat4Strings : String -> String -> String -> String -> String
-concat4Strings x y z w =
-  x ++ y ++ z ++ w
-
-ifFieldThenString : String -> String -> Json.Decode.Decoder String
-ifFieldThenString field s =
-  Json.Decode.map (stringIfTrue s) (Json.Decode.field field Json.Decode.bool)
-
-stringIfTrue : String -> Bool -> String
-stringIfTrue s true =
-  if true then s else ""
