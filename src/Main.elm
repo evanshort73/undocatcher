@@ -1,12 +1,11 @@
 port module Main exposing (main)
 
+import UndoCatcher exposing (UndoCatcher)
+
 import Dom
-import Html exposing (Html, Attribute, div, textarea, button)
-import Html.Attributes exposing
-  (style, id, value, disabled, property, attribute)
-import Html.Events exposing (onInput, onClick)
-import Html.Keyed as Keyed
-import Json.Encode
+import Html exposing (Html, div, button)
+import Html.Attributes exposing (disabled)
+import Html.Events exposing (onClick)
 import Task
 
 main : Program Never Model Msg
@@ -15,42 +14,20 @@ main =
     { init = init
     , update = update
     , subscriptions =
-        always (Sub.batch [ undo (always Undo), redo (always Redo) ])
+        always
+          ( Sub.batch
+              [ UndoCatcher.undoPort (always Undo)
+              , UndoCatcher.redoPort (always Redo)
+              ]
+          )
     , view = view
     }
 
-type alias Model =
-  { frame : Frame
-  , edits : List Edit
-  , editCount : Int
-  , futureEdits : List Edit
-  }
-
-type alias Edit =
-  { before : Frame
-  , after : Frame
-  }
-
-type alias Frame =
-  { text : String
-  , start : Int
-  , stop : Int
-  }
+type alias Model = UndoCatcher
 
 init : ( Model, Cmd Msg )
 init =
-  ( { frame =
-        let text = "hello" in
-          { text = text
-          , start = String.length text
-          , stop = String.length text
-          }
-    , edits = []
-    , editCount = 0
-    , futureEdits = []
-    }
-  , Cmd.none
-  )
+  ( UndoCatcher.fromString "hello", Cmd.none )
 
 type Msg
   = NoOp
@@ -65,100 +42,25 @@ update msg model =
     NoOp ->
       ( model, Cmd.none )
     TextChanged text ->
-      ( let frame = model.frame in
-          { model | frame = { frame | text = text }}
-      , Cmd.none
-      )
+      ( UndoCatcher.update text model, Cmd.none )
     Replace ( start, stop, replacement ) ->
-      ( let
-          after =
-            { text =
-                String.concat
-                  [ String.left start model.frame.text
-                  , replacement
-                  , String.dropLeft stop model.frame.text
-                  ]
-            , start = start + String.length replacement
-            , stop = start + String.length replacement
-            }
-        in
-          { model
-          | frame = after
-          , edits =
-              { before =
-                  { text = model.frame.text
-                  , start = start
-                  , stop = stop
-                  }
-              , after = after
-              } ::
-                model.edits
-          , editCount = model.editCount + 1
-          , futureEdits = []
-          }
+      ( UndoCatcher.replace start stop replacement model
       , Task.attempt (always NoOp) (Dom.focus "catcher")
       )
     Undo ->
-      case model.edits of
-        [] ->
-          ( model, Cmd.none )
-        edit :: edits ->
-          ( { model
-            | frame = edit.before
-            , edits = edits
-            , editCount = model.editCount - 1
-            , futureEdits = edit :: model.futureEdits
-            }
-          , Task.attempt (always NoOp) (Dom.focus "catcher")
-          )
+      ( UndoCatcher.undo model
+      , Task.attempt (always NoOp) (Dom.focus "catcher")
+      )
     Redo ->
-      case model.futureEdits of
-        [] ->
-          ( model, Cmd.none )
-        edit :: futureEdits ->
-          ( { model
-            | frame = edit.after
-            , edits = edit :: model.edits
-            , editCount = model.editCount + 1
-            , futureEdits = futureEdits
-            }
-          , Task.attempt (always NoOp) (Dom.focus "catcher")
-          )
-
-port undo : (() -> msg) -> Sub msg
-
-port redo : (() -> msg) -> Sub msg
+      ( UndoCatcher.redo model
+      , Task.attempt (always NoOp) (Dom.focus "catcher")
+      )
 
 view : Model -> Html Msg
 view model =
   div
     []
-    [ Keyed.node
-        "div"
-        [ style
-            [ ( "width", "500px" )
-            , ( "height", "200px" )
-            , ( "position", "relative" )
-            ]
-        ]
-        ( List.concat
-            [ List.map2
-                (viewHiddenFrame cancelUndo)
-                ( List.range
-                    (model.editCount - List.length model.edits)
-                    (model.editCount - 1)
-                )
-                (List.map .before (List.reverse model.edits))
-            , [ viewFrame model ]
-            , List.map2
-                (viewHiddenFrame cancelRedo)
-                ( List.range
-                    (model.editCount + 1)
-                    (model.editCount + List.length model.futureEdits)
-                )
-                (List.map .after model.futureEdits)
-            ]
-        )
+    [ Html.map TextChanged (UndoCatcher.view model)
     , button
         [ onClick (Replace ( 1, 2, "ea" ))
         ]
@@ -178,76 +80,6 @@ view model =
         ]
     , Html.text (toString model)
     ]
-
-viewFrame : Model -> (String, Html Msg)
-viewFrame model =
-  ( toString model.editCount
-  , textarea
-      [ onInput TextChanged
-      , attribute "onkeydown" "lockCatcher(event)"
-      , attribute "oninput" "unlockCatcher(event)"
-      , id "catcher"
-      , value model.frame.text
-      , property
-          "selectionStart"
-          (Json.Encode.int model.frame.start)
-      , property
-          "selectionEnd"
-          (Json.Encode.int model.frame.stop)
-      , property "lockedValue" Json.Encode.null
-      , property
-          "undoValue"
-          ( case model.edits of
-              [] -> Json.Encode.null
-              edit :: _ -> (Json.Encode.string edit.after.text)
-          )
-      , property
-          "redoValue"
-          ( case model.futureEdits of
-              [] -> Json.Encode.null
-              edit :: _ -> (Json.Encode.string edit.before.text)
-          )
-      , style
-          [ ( "width", "100%" )
-          , ( "height", "100%" )
-          , ( "position", "absolute" )
-          , ( "top", "0px" )
-          , ( "left", "0px" )
-          , ( "box-sizing", "border-box" )
-          , ( "margin", "0px" )
-          ]
-      ]
-      []
-  )
-
-viewHiddenFrame : String -> Int -> Frame -> (String, Html Msg)
-viewHiddenFrame inputScript i frame =
-  ( toString i
-  , textarea
-      [ value frame.text
-      , attribute "oninput" inputScript
-      , property "lockedValue" (Json.Encode.string frame.text)
-      , style
-          [ ( "width", "100%" )
-          , ( "height", "25%" )
-          , ( "position", "absolute" )
-          , ( "bottom", "0px" )
-          , ( "left", "0px" )
-          , ( "box-sizing", "border-box" )
-          , ( "margin", "0px" )
-          , ( "visibility", "hidden" )
-          ]
-      ]
-      []
-  )
-
-cancelUndo : String
-cancelUndo =
-  "document.execCommand(\"redo\", true, null)"
-
-cancelRedo : String
-cancelRedo =
-  "document.execCommand(\"undo\", true, null)"
 
 canUndo : Model -> Bool
 canUndo model =
