@@ -6,6 +6,7 @@ import Dom
 import Html exposing (Html, div, button)
 import Html.Attributes exposing (disabled)
 import Html.Events exposing (onClick)
+import Html.Lazy
 import Task
 
 main : Program Never Model Msg
@@ -20,7 +21,7 @@ main =
               , UndoCatcher.redoPort (always Redo)
               ]
           )
-    , view = view
+    , view = Html.Lazy.lazy view
     }
 
 type alias Model = UndoCatcher
