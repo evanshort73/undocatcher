@@ -196,8 +196,8 @@ viewHiddenFrame inputScript i frame =
 
 cancelUndo : String
 cancelUndo =
-  "document.execCommand(\"redo\", true, null)"
+  "if (event.target.value != event.target.lockedValue) document.execCommand(\"redo\", true, null)"
 
 cancelRedo : String
 cancelRedo =
-  "document.execCommand(\"undo\", true, null)"
+  "if (event.target.value != event.target.lockedValue) document.execCommand(\"undo\", true, null)"
