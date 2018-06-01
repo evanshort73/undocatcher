@@ -8,3 +8,5 @@ the solution: we create a new `textarea` element everytime we want to programmat
 currently this demo seems to work correctly in Firefox, Chrome, and Edge. The only unexpected behavior is that after you edit manually, then undo, then replace text programmatically, then undo again, redo will put back the manual edit instead of the programmatical edit. I don't think there's any way to fix this, at least not on Firefox.
 
 TODO: for Chrome, use the input event with `inputType == "historyUndo"` received by a hidden `textarea` to trigger the `Undo` action instead of relying on the keydown event. This will allow the user to undo even when the `textarea` is not focused, which is the expected behavior in Chrome.
+
+Never mind, that won't work because there might not be any normal edits for Chrome to undo.
